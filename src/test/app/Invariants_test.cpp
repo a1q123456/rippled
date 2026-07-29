@@ -2914,6 +2914,23 @@ class Invariants_test : public beast::unit_test::Suite
             return true;
         };
 
+        // XLS-0103: preclose that creates a closed-ended vault, used to exercise
+        // the closed-ended immutability and coherence invariants.
+        auto const precloseXrpClosed = [&](Account const& a1, Account const& a2, Env& env) -> bool {
+            env.fund(XRP(1000), a3, a4);
+            auto const now = env.now().time_since_epoch().count();
+            Vault const vault{env};
+            auto [tx, keylet] = vault.create(
+                {.owner = a1,
+                 .asset = xrpIssue(),
+                 .vaultKind = std::to_underlying(VaultKind::ClosedEnded),
+                 .subscriptionDate = now + 1000,
+                 .redemptionDate = now + 1000 + 100'000});
+            env(tx);
+            env(vault.deposit({.depositor = a1, .id = keylet.key, .amount = XRP(10)}));
+            return true;
+        };
+
         testcase << "Vault general checks";
         doInvariantCheck(
             {"vault deletion succeeded without deleting a vault"},
@@ -3333,6 +3350,101 @@ class Invariants_test : public beast::unit_test::Suite
                 if (!sleVault)
                     return false;
                 (*sleVault)[sfShareMPTID] = MPTID(42);
+                ac.view().update(sleVault);
+                return true;
+            },
+            XRPAmount{},
+            STTx{ttVAULT_SET, [](STObject& tx) {}},
+            {tecINVARIANT_FAILED, tecINVARIANT_FAILED},
+            precloseXrp);
+
+        // XLS-0103: VaultKind is immutable. Turning an open-ended vault into a
+        // closed-ended one (with valid dates so coherence still holds) must be
+        // rejected.
+        doInvariantCheck(
+            {"violation of vault immutable closed-ended data"},
+            [&](Account const& a1, Account const& a2, ApplyContext& ac) {
+                auto const keylet = keylet::vault(a1.id(), ac.view().seq());
+                auto sleVault = ac.view().peek(keylet);
+                if (!sleVault)
+                    return false;
+                (*sleVault)[sfVaultKind] = std::to_underlying(VaultKind::ClosedEnded);
+                (*sleVault)[sfSubscriptionDate] = 1000u;
+                (*sleVault)[sfRedemptionDate] = 101'000u;
+                ac.view().update(sleVault);
+                return true;
+            },
+            XRPAmount{},
+            STTx{ttVAULT_SET, [](STObject& tx) {}},
+            {tecINVARIANT_FAILED, tecINVARIANT_FAILED},
+            precloseXrp);
+
+        // XLS-0103: SubscriptionDate is immutable.
+        doInvariantCheck(
+            {"violation of vault immutable closed-ended data"},
+            [&](Account const& a1, Account const& a2, ApplyContext& ac) {
+                auto const keylet = keylet::vault(a1.id(), ac.view().seq());
+                auto sleVault = ac.view().peek(keylet);
+                if (!sleVault)
+                    return false;
+                (*sleVault)[sfSubscriptionDate] = *(*sleVault)[sfSubscriptionDate] + 1;
+                ac.view().update(sleVault);
+                return true;
+            },
+            XRPAmount{},
+            STTx{ttVAULT_SET, [](STObject& tx) {}},
+            {tecINVARIANT_FAILED, tecINVARIANT_FAILED},
+            precloseXrpClosed);
+
+        // XLS-0103: RedemptionDate is immutable.
+        doInvariantCheck(
+            {"violation of vault immutable closed-ended data"},
+            [&](Account const& a1, Account const& a2, ApplyContext& ac) {
+                auto const keylet = keylet::vault(a1.id(), ac.view().seq());
+                auto sleVault = ac.view().peek(keylet);
+                if (!sleVault)
+                    return false;
+                (*sleVault)[sfRedemptionDate] = *(*sleVault)[sfRedemptionDate] + 1;
+                ac.view().update(sleVault);
+                return true;
+            },
+            XRPAmount{},
+            STTx{ttVAULT_SET, [](STObject& tx) {}},
+            {tecINVARIANT_FAILED, tecINVARIANT_FAILED},
+            precloseXrpClosed);
+
+        // XLS-0103: a closed-ended vault must carry both lifecycle dates.
+        // Removing one leaves the kind and dates inconsistent (and also mutates
+        // an immutable field).
+        doInvariantCheck(
+            {"violation of vault immutable closed-ended data",
+             "vault kind and lifecycle dates are inconsistent"},
+            [&](Account const& a1, Account const& a2, ApplyContext& ac) {
+                auto const keylet = keylet::vault(a1.id(), ac.view().seq());
+                auto sleVault = ac.view().peek(keylet);
+                if (!sleVault)
+                    return false;
+                sleVault->makeFieldAbsent(sfSubscriptionDate);
+                ac.view().update(sleVault);
+                return true;
+            },
+            XRPAmount{},
+            STTx{ttVAULT_SET, [](STObject& tx) {}},
+            {tecINVARIANT_FAILED, tecINVARIANT_FAILED},
+            precloseXrpClosed);
+
+        // XLS-0103: an open-ended vault must not carry lifecycle dates. Adding a
+        // date makes the kind and dates inconsistent (and mutates an immutable
+        // field).
+        doInvariantCheck(
+            {"violation of vault immutable closed-ended data",
+             "vault kind and lifecycle dates are inconsistent"},
+            [&](Account const& a1, Account const& a2, ApplyContext& ac) {
+                auto const keylet = keylet::vault(a1.id(), ac.view().seq());
+                auto sleVault = ac.view().peek(keylet);
+                if (!sleVault)
+                    return false;
+                (*sleVault)[sfSubscriptionDate] = 1000u;
                 ac.view().update(sleVault);
                 return true;
             },

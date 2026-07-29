@@ -157,4 +157,40 @@ getVaultVersion(SLE::const_ref vault)
     return static_cast<VaultVersion>(version);
 }
 
+[[nodiscard]] VaultKind
+getVaultKind(SLE::const_ref vault)
+{
+    XRPL_ASSERT(vault && vault->getType() == ltVAULT, "xrpl::getVaultKind : valid Vault sle");
+    if (!vault->isFieldPresent(sfVaultKind))
+        return VaultKind::OpenEnded;
+
+    auto const kind = vault->at(sfVaultKind);
+    if (kind > std::to_underlying(VaultKind::ClosedEnded))
+    {
+        // LCOV_EXCL_START
+        UNREACHABLE("xrpl::getVaultKind : invalid vault kind");
+        return VaultKind::OpenEnded;
+        // LCOV_EXCL_STOP
+    }
+    return static_cast<VaultKind>(kind);
+}
+
+[[nodiscard]] VaultPhase
+vaultPhase(SLE::const_ref vault, NetClock::time_point now)
+{
+    if (getVaultKind(vault) != VaultKind::ClosedEnded)
+        return VaultPhase::NoPhase;
+
+    XRPL_ASSERT(
+        vault->isFieldPresent(sfSubscriptionDate) && vault->isFieldPresent(sfRedemptionDate),
+        "xrpl::vaultPhase : closed-ended vault has both dates");
+
+    auto const seconds = now.time_since_epoch().count();
+    if (seconds < vault->at(sfSubscriptionDate))
+        return VaultPhase::Subscription;
+    if (seconds < vault->at(sfRedemptionDate))
+        return VaultPhase::Investment;
+    return VaultPhase::Redemption;
+}
+
 }  // namespace xrpl
