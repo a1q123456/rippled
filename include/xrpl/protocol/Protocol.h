@@ -328,6 +328,38 @@ enum class VaultVersion : uint8_t {
 };
 
 /**
+ * Vault lifecycle kind (XLS-0103). Stored in the optional sfVaultKind field of
+ * an ltVAULT. Absent implies OpenEnded. Orthogonal to VaultVersion, which
+ * describes the accounting schema, not the lifecycle.
+ */
+enum class VaultKind : std::uint8_t {
+    OpenEnded = 0,
+    ClosedEnded = 1,
+};
+
+/**
+ * Lifecycle phase of a closed-ended vault, derived at run time from the parent
+ * ledger close time versus sfSubscriptionDate and sfRedemptionDate. Never
+ * stored. Open-ended vaults are always NoPhase.
+ */
+enum class VaultPhase : std::uint8_t {
+    NoPhase = 0,
+    Subscription,
+    Investment,
+    Redemption,
+};
+
+/**
+ * Minimum separation, in seconds, enforced between the phase boundaries of a
+ * closed-ended vault (XLS-0103, R1). Fixed at one ledger's default close-time
+ * resolution to avoid boundary/equality edge cases. Used in exactly two
+ * inequalities: RedemptionDate - SubscriptionDate >= kRedemptionBuffer
+ * (VaultCreate) and startDate + paymentInterval * paymentTotal +
+ * kRedemptionBuffer < RedemptionDate (LoanSet).
+ */
+constexpr std::uint32_t kRedemptionBuffer = 30;
+
+/**
  * Maximum recursion depth for vault shares being put as an asset inside
  * another vault; counted from 0
  */

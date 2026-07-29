@@ -10,6 +10,7 @@
 #include <xrpl/ledger/helpers/LendingHelpers.h>
 #include <xrpl/ledger/helpers/SponsorHelpers.h>
 #include <xrpl/ledger/helpers/TokenHelpers.h>
+#include <xrpl/ledger/helpers/VaultHelpers.h>
 #include <xrpl/protocol/AccountID.h>
 #include <xrpl/protocol/Asset.h>
 #include <xrpl/protocol/Feature.h>
@@ -307,6 +308,37 @@ LoanSet::preclaim(PreclaimContext const& ctx)
     {
         // Should be impossible
         return tefBAD_LEDGER;  // LCOV_EXCL_LINE
+    }
+
+    // XLS-0103: closed-ended vaults only permit loan origination during the
+    // Investment phase, and every loan must fully mature (final scheduled
+    // payment plus kRedemptionBuffer) strictly before RedemptionDate so all
+    // repayments are collected before depositors begin exiting. Open-ended
+    // vaults are NoPhase and unaffected. The parent ledger close time is the
+    // single time source for both the phase and the maturity bound; the
+    // one-ledger buffer absorbs its sub-ledger difference from the recorded
+    // loan start date (getStartDate).
+    auto const now = ctx.view.parentCloseTime();
+    if (auto const phase = vaultPhase(vault, now); phase != VaultPhase::NoPhase)
+    {
+        if (phase != VaultPhase::Investment)
+        {
+            JLOG(ctx.j.warn()) << "LoanSet: closed-ended vault is not in the Investment phase.";
+            return tecNO_PERMISSION;
+        }
+
+        auto const interval = tx.at(~sfPaymentInterval).value_or(kDefaultPaymentInterval);
+        auto const total = tx.at(~sfPaymentTotal).value_or(kDefaultPaymentTotal);
+        // The overflow guard at the top of preclaim already bounds
+        // startDate + interval * total below UINT32 max; compute in 64-bit for
+        // safety and compare against the immutable RedemptionDate.
+        std::uint64_t const maturity = std::uint64_t{now.time_since_epoch().count()} +
+            std::uint64_t{interval} * std::uint64_t{total} + kRedemptionBuffer;
+        if (maturity >= vault->at(sfRedemptionDate))
+        {
+            JLOG(ctx.j.warn()) << "LoanSet: loan maturity does not fall before RedemptionDate.";
+            return tecNO_PERMISSION;
+        }
     }
 
     if (vault->at(sfAssetsMaximum) != 0 && vault->at(sfAssetsTotal) >= vault->at(sfAssetsMaximum))

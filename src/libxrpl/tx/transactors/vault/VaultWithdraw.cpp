@@ -73,6 +73,12 @@ VaultWithdraw::preclaim(PreclaimContext const& ctx)
     if (!vault)
         return tecNO_ENTRY;
 
+    // XLS-0103: withdrawals from a closed-ended vault are blocked during the
+    // Investment phase (the lock-up); Subscription and Redemption are allowed.
+    // Open-ended vaults are NoPhase and unaffected.
+    if (vaultPhase(vault, ctx.view.parentCloseTime()) == VaultPhase::Investment)
+        return tecNO_PERMISSION;
+
     auto const amount = ctx.tx[sfAmount];
     auto const vaultAsset = vault->at(sfAsset);
     auto const vaultShare = vault->at(sfShareMPTID);

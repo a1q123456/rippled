@@ -50,6 +50,15 @@ VaultSet::preflight(PreflightContext const& ctx)
         }
     }
 
+    // XLS-0103: VaultKind, SubscriptionDate and RedemptionDate are immutable
+    // once set at creation. Reject any attempt to set or alter them.
+    if (ctx.tx.isFieldPresent(sfVaultKind) || ctx.tx.isFieldPresent(sfSubscriptionDate) ||
+        ctx.tx.isFieldPresent(sfRedemptionDate))
+    {
+        JLOG(ctx.j.debug()) << "VaultSet: closed-ended vault fields are immutable.";
+        return temMALFORMED;
+    }
+
     if (!ctx.tx.isFieldPresent(sfDomainID) && !ctx.tx.isFieldPresent(sfAssetsMaximum) &&
         !ctx.tx.isFieldPresent(sfData))
     {

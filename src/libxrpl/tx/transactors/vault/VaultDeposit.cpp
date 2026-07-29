@@ -71,6 +71,17 @@ VaultDeposit::preclaim(PreclaimContext const& ctx)
     if (!vault)
         return tecNO_ENTRY;
 
+    // XLS-0103: deposits into a closed-ended vault are only permitted during
+    // the Subscription phase. Open-ended vaults are NoPhase and unaffected.
+    switch (vaultPhase(vault, ctx.view.parentCloseTime()))
+    {
+        case VaultPhase::Investment:
+        case VaultPhase::Redemption:
+            return tecNO_PERMISSION;
+        default:
+            break;
+    }
+
     auto const& account = ctx.tx[sfAccount];
     auto const amount = ctx.tx[sfAmount];
     auto const vaultAsset = vault->at(sfAsset);

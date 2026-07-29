@@ -55,6 +55,9 @@ class ValidVault
         Number assetsAvailable = 0;
         Number assetsMaximum = 0;
         Number lossUnrealized = 0;
+        std::optional<std::uint8_t> vaultKind;
+        std::optional<std::uint32_t> subscriptionDate;
+        std::optional<std::uint32_t> redemptionDate;
 
         Vault static make(SLE const&);
     };

@@ -99,6 +99,43 @@ VaultCreate::preflight(PreflightContext const& ctx)
             return temMALFORMED;
     }
 
+    // XLS-0103 closed-ended vault fields. Gated on featureLendingProtocolV1_1;
+    // they are inert (and rejected) when the amendment is disabled.
+    bool const hasVaultKind = ctx.tx.isFieldPresent(sfVaultKind);
+    bool const hasSubscriptionDate = ctx.tx.isFieldPresent(sfSubscriptionDate);
+    bool const hasRedemptionDate = ctx.tx.isFieldPresent(sfRedemptionDate);
+    if (hasVaultKind || hasSubscriptionDate || hasRedemptionDate)
+    {
+        if (!ctx.rules.enabled(featureLendingProtocolV1_1))
+            return temDISABLED;
+
+        auto const kind = ctx.tx[~sfVaultKind].value_or(std::to_underlying(VaultKind::OpenEnded));
+        if (kind > std::to_underlying(VaultKind::ClosedEnded))
+            return temMALFORMED;
+
+        bool const closedEnded = kind == std::to_underlying(VaultKind::ClosedEnded);
+        if (!closedEnded)
+        {
+            // Dates are only meaningful for closed-ended vaults.
+            if (hasSubscriptionDate || hasRedemptionDate)
+                return temMALFORMED;
+        }
+        else
+        {
+            // Closed-ended vaults require both dates.
+            if (!hasSubscriptionDate || !hasRedemptionDate)
+                return temMALFORMED;
+
+            // The Investment phase must be at least kRedemptionBuffer long,
+            // which also implies SubscriptionDate < RedemptionDate.
+            auto const subscriptionDate = ctx.tx[sfSubscriptionDate];
+            auto const redemptionDate = ctx.tx[sfRedemptionDate];
+            if (redemptionDate < subscriptionDate ||
+                redemptionDate - subscriptionDate < kRedemptionBuffer)
+                return temMALFORMED;
+        }
+    }
+
     return tesSUCCESS;
 }
 
@@ -135,6 +172,18 @@ VaultCreate::preclaim(PreclaimContext const& ctx)
     if (auto const accountId = pseudoAccountAddress(ctx.view, keylet::vault(account, sequence).key);
         accountId == beast::kZero)
         return terADDRESS_COLLISION;
+
+    // XLS-0103: a closed-ended vault's SubscriptionDate must be strictly after
+    // the parent ledger close time, otherwise it would be created already past
+    // its subscription window. This check depends on the ledger and so lives in
+    // preclaim rather than preflight.
+    if (ctx.tx[~sfVaultKind].value_or(std::to_underlying(VaultKind::OpenEnded)) ==
+        std::to_underlying(VaultKind::ClosedEnded))
+    {
+        auto const now = ctx.view.parentCloseTime();
+        if (ctx.tx[sfSubscriptionDate] <= now.time_since_epoch().count())
+            return temMALFORMED;
+    }
 
     return tesSUCCESS;
 }
@@ -244,6 +293,16 @@ VaultCreate::doApply()
         vault->at(sfScale) = scale;
     if (view().rules().enabled(featureLendingProtocolV1_1))
         vault->at(sfLEVersion) = std::to_underlying(VaultVersion::CashBasis);
+    // XLS-0103: persist the closed-ended lifecycle fields. Open-ended vaults
+    // (absent/OpenEnded kind) leave all three unset. preflight/preclaim have
+    // already validated presence, ordering and the redemption buffer.
+    if (tx[~sfVaultKind].value_or(std::to_underlying(VaultKind::OpenEnded)) ==
+        std::to_underlying(VaultKind::ClosedEnded))
+    {
+        vault->at(sfVaultKind) = std::to_underlying(VaultKind::ClosedEnded);
+        vault->at(sfSubscriptionDate) = tx[sfSubscriptionDate];
+        vault->at(sfRedemptionDate) = tx[sfRedemptionDate];
+    }
     view().insert(vault);
 
     // Explicitly create MPToken for the vault owner

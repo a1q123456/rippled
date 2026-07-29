@@ -123,4 +123,33 @@ isSoleShareholder(ReadView const& view, AccountID const& account, SLE::const_ref
 [[nodiscard]] VaultVersion
 getVaultVersion(SLE::const_ref vault);
 
+/**
+ * Resolves a Vault's lifecycle kind (XLS-0103). Vaults without sfVaultKind
+ * (all vaults created before featureLendingProtocolV1_1, and open-ended vaults)
+ * resolve to VaultKind::OpenEnded. Model of getVaultVersion.
+ *
+ * @param vault The vault SLE.
+ *
+ * @return The Vault's kind, or VaultKind::OpenEnded if the field is absent.
+ */
+[[nodiscard]] VaultKind
+getVaultKind(SLE::const_ref vault);
+
+/**
+ * Derives the lifecycle phase of a Vault (XLS-0103) at a given point in time.
+ * Open-ended vaults are always VaultPhase::NoPhase. For closed-ended vaults the
+ * phase is derived from `now` versus sfSubscriptionDate and sfRedemptionDate:
+ * now < SubscriptionDate is Subscription, SubscriptionDate <= now <
+ * RedemptionDate is Investment, and now >= RedemptionDate is Redemption. The
+ * phase is never stored. Callers must pass the parent ledger close time as
+ * `now`.
+ *
+ * @param vault The vault SLE.
+ * @param now The reference time (parent ledger close time).
+ *
+ * @return The Vault's phase.
+ */
+[[nodiscard]] VaultPhase
+vaultPhase(SLE::const_ref vault, NetClock::time_point now);
+
 }  // namespace xrpl

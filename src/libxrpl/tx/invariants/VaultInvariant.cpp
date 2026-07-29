@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -44,6 +45,9 @@ ValidVault::Vault::make(SLE const& from)
     self.assetsAvailable = from.at(sfAssetsAvailable);
     self.assetsMaximum = from.at(sfAssetsMaximum);
     self.lossUnrealized = from.at(sfLossUnrealized);
+    self.vaultKind = from[~sfVaultKind];
+    self.subscriptionDate = from[~sfSubscriptionDate];
+    self.redemptionDate = from[~sfRedemptionDate];
     return self;
 }
 
@@ -429,6 +433,35 @@ ValidVault::finalize(
             afterVault.shareMPTID != beforeVault.shareMPTID)
         {
             JLOG(j.fatal()) << "Invariant failed: violation of vault immutable data";
+            result = false;
+        }
+
+        // XLS-0103: VaultKind, SubscriptionDate and RedemptionDate are set at
+        // creation and must never change afterwards.
+        if (afterVault.vaultKind != beforeVault.vaultKind ||
+            afterVault.subscriptionDate != beforeVault.subscriptionDate ||
+            afterVault.redemptionDate != beforeVault.redemptionDate)
+        {
+            JLOG(j.fatal()) << "Invariant failed: violation of vault immutable "
+                               "closed-ended data";
+            result = false;
+        }
+    }
+
+    // XLS-0103: a closed-ended vault must carry both dates, and an open-ended
+    // vault must carry neither. The kind and dates are only meaningful when the
+    // amendment is enabled.
+    if (view.rules().enabled(featureLendingProtocolV1_1))
+    {
+        bool const closedEnded = afterVault.vaultKind == std::to_underlying(VaultKind::ClosedEnded);
+        bool const hasDates =
+            afterVault.subscriptionDate.has_value() && afterVault.redemptionDate.has_value();
+        bool const hasEitherDate =
+            afterVault.subscriptionDate.has_value() || afterVault.redemptionDate.has_value();
+        if (closedEnded ? !hasDates : hasEitherDate)
+        {
+            JLOG(j.fatal()) << "Invariant failed: vault kind and lifecycle "
+                               "dates are inconsistent";
             result = false;
         }
     }
